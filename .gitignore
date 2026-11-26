@@ -1,4 +1,8 @@
 /build*/
 compile_commands.json
 /docs/api/
-.github
+
+# CMake/CTest output from in-source builds
+CTestTestfile.cmake
+*_include-*.cmake
+*_tests-*.cmake

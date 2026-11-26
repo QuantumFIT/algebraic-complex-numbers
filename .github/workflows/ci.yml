@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CATCH2_VERSION: v2.13.10
+  CATCH2_PREFIX: ${{ github.workspace }}/.deps/catch2
+
+jobs:
+  test:
+    name: ${{ matrix.compiler }} / GMP=${{ matrix.gmp }} / STATS=${{ matrix.stats }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+        gmp: [ON, OFF]
+        stats: [OFF]
+        include:
+          # Instrumentation build: also compiles test_stats and the benchmarks.
+          - compiler: g++
+            gmp: ON
+            stats: ON
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libgmp-dev
+
+      # The suite needs Catch2 v2; Ubuntu 24.04 only packages v3.
+      - name: Cache Catch2 v2
+        id: cache-catch2
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CATCH2_PREFIX }}
+          key: catch2-${{ env.CATCH2_VERSION }}-${{ runner.os }}
+
+      - name: Build Catch2 v2
+        if: steps.cache-catch2.outputs.cache-hit != 'true'
+        run: |
+          git clone --branch "$CATCH2_VERSION" --depth 1 https://github.com/catchorg/Catch2.git "$RUNNER_TEMP/catch2-src"
+          cmake -S "$RUNNER_TEMP/catch2-src" -B "$RUNNER_TEMP/catch2-build" -G Ninja \
+            -DBUILD_TESTING=OFF -DCATCH_INSTALL_DOCS=OFF \
+            -DCMAKE_INSTALL_PREFIX="$CATCH2_PREFIX"
+          cmake --build "$RUNNER_TEMP/catch2-build" --target install
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
+            -DCMAKE_PREFIX_PATH="$CATCH2_PREFIX" \
+            -DACN_WITH_GMP=${{ matrix.gmp }} \
+            -DACN_STATS=${{ matrix.stats }} \
+            -DACN_BUILD_BENCH=${{ matrix.stats }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j "$(nproc)"
